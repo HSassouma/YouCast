@@ -184,7 +184,15 @@ class Activity extends Model
         return $query->whereIn('status', [
             ActivityStatus::Published->value,
             ActivityStatus::Closed->value,
-        ]);
+        ])->notFinished();
+    }
+
+    /** Keep ended activities in storage while excluding them from learner-facing queries. */
+    public function scopeNotFinished(Builder $query): Builder
+    {
+        return $query->where(function (Builder $builder): void {
+            $builder->whereNull('ends_at')->orWhere('ends_at', '>', now());
+        });
     }
 
     public function usesTeams(): bool
@@ -195,6 +203,11 @@ class Activity extends Model
     public function isPublished(): bool
     {
         return $this->status === ActivityStatus::Published;
+    }
+
+    public function isFinished(): bool
+    {
+        return $this->ends_at !== null && $this->ends_at->lte(now());
     }
 
     public function isClosed(): bool
@@ -219,7 +232,7 @@ class Activity extends Model
 
     public function registrationWindowOpen(): bool
     {
-        if (! $this->isPublished()) {
+        if (! $this->isPublished() || $this->isFinished()) {
             return false;
         }
 

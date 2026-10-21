@@ -30,6 +30,14 @@ class RegistrationService
         return DB::transaction(function () use ($user, $activity) {
             $locked = Activity::query()->whereKey($activity->id)->lockForUpdate()->firstOrFail();
 
+            $this->assertCanRegister($user, $locked);
+
+            if ($locked->usesTeams()) {
+                throw ValidationException::withMessages([
+                    'activity' => 'Cette activité nécessite une inscription en équipe.',
+                ]);
+            }
+
             $this->assertCapacity($locked, 1);
             $this->assertNotAlreadyRegistered($user, $locked);
 
@@ -69,45 +77,50 @@ class RegistrationService
 
     public function cancel(User $user, Activity $activity): Registration
     {
-        if (! $activity->cancellation_allowed) {
-            throw ValidationException::withMessages([
-                'activity' => "L'annulation n'est pas autorisée pour cette activité.",
-            ]);
-        }
+        return DB::transaction(function () use ($user, $activity) {
+            $locked = Activity::query()->whereKey($activity->id)->lockForUpdate()->firstOrFail();
 
-        if (! $activity->registrationWindowOpen() && ! $activity->isPublished()) {
-            throw ValidationException::withMessages([
-                'activity' => 'Vous ne pouvez plus annuler cette inscription.',
-            ]);
-        }
+            if (! $locked->cancellation_allowed) {
+                throw ValidationException::withMessages([
+                    'activity' => "L'annulation n'est pas autorisée pour cette activité.",
+                ]);
+            }
 
-        $registration = Registration::query()
-            ->where('user_id', $user->id)
-            ->where('activity_id', $activity->id)
-            ->first();
+            if (! $locked->isPublished()) {
+                throw ValidationException::withMessages([
+                    'activity' => 'Vous ne pouvez plus annuler cette inscription.',
+                ]);
+            }
 
-        if (! $registration || ! $registration->isActive()) {
-            throw ValidationException::withMessages([
-                'activity' => "Vous n'avez pas d'inscription active à cette activité.",
-            ]);
-        }
+            if ($locked->usesTeams()) {
+                throw ValidationException::withMessages([
+                    'activity' => 'Quittez votre équipe ou demandez à son responsable de la désinscrire.',
+                ]);
+            }
 
-        if ($activity->usesTeams()) {
-            throw ValidationException::withMessages([
-                'activity' => 'Quittez votre équipe ou demandez à son responsable de la désinscrire.',
-            ]);
-        }
+            $registration = Registration::query()
+                ->where('user_id', $user->id)
+                ->where('activity_id', $locked->id)
+                ->lockForUpdate()
+                ->first();
 
-        $registration->status = RegistrationStatus::Cancelled;
-        $registration->cancelled_at = now();
-        $registration->save();
+            if (! $registration || ! $registration->isActive()) {
+                throw ValidationException::withMessages([
+                    'activity' => "Vous n'avez pas d'inscription active à cette activité.",
+                ]);
+            }
 
-        return $registration->fresh();
+            $registration->status = RegistrationStatus::Cancelled;
+            $registration->cancelled_at = now();
+            $registration->save();
+
+            return $registration->fresh();
+        }, self::TRANSACTION_ATTEMPTS);
     }
 
     public function assertCanRegister(User $user, Activity $activity): void
     {
-        if (! $activity->registrationWindowOpen()) {
+        if (! $activity->registrationWindowOpen() || $activity->isFinished()) {
             throw ValidationException::withMessages([
                 'activity' => 'Les inscriptions ne sont pas ouvertes pour cette activité.',
             ]);

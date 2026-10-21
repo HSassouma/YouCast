@@ -9,9 +9,9 @@ Legend:
 * **[ ] Missing** — the control is absent.
 * **[!] Residual risk** — accepted or documented limitation, see the notes.
 
-> **Known exception (non-production):** the simplified password-reset flow
-> does not verify ownership of the e-mail address. See control 1.8 and finding
-> H-03 in `BACKEND_SECURITY_AUDIT.md`. Do not deploy this flow as-is.
+Production setup still needs a real SMTP mailer, `APP_URL` set to the public
+HTTPS origin, `APP_DEBUG=false`, and `SESSION_SECURE_COOKIE=true`. See the
+production checklist in `README.md`.
 
 ---
 
@@ -25,13 +25,13 @@ Legend:
 | 1.4 | Lockouts are logged | [x] Verified | `Lockout` event listener logs the source IP only (no personal data). |
 | 1.5 | Session is regenerated after login | [x] Verified | `AuthenticatedSessionController::store()`. |
 | 1.6 | Logout invalidates the session and CSRF token | [x] Verified | `invalidate()` + `regenerateToken()`; verified by test. |
-| 1.7 | Password reset requests and submissions are throttled | [x] Verified | `throttle:5,1` on both POST routes. The request is session-bound and cannot be replayed after success. |
-| 1.8 | Password reset requires proof of e-mail ownership | [!] Residual risk | The simplified flow only checks that the account exists and intentionally reveals that fact. No e-mail token, OTP, 2FA or administrator verification is required. **Not production-safe.** |
+| 1.7 | Password reset requests and submissions are throttled | [x] Verified | Route throttle plus Laravel broker throttle; verified by tests. |
+| 1.8 | Password reset requires proof of e-mail ownership | [x] Verified | Laravel broker sends a hashed, single-use token link that expires after 60 minutes; reset tests verify it. |
 | 1.9 | Session cookie is `HttpOnly` and `SameSite=lax` | [x] Verified | `config/session.php`. |
-| 1.10 | Session cookie is `Secure` in production | [~] Partially verified | `SESSION_SECURE_COOKIE` now defaults to *unset* (HTTPS auto-detection) instead of `false`. A production deployment must set it to `true` — it cannot be `true` by default because the local environment runs over plain HTTP. |
+| 1.10 | Session cookie is `Secure` in production | [x] Verified | Config defaults to Secure in production; the production checklist explicitly sets `SESSION_SECURE_COOKIE=true` and local HTTP can override it. |
 | 1.11 | Registration cannot be used to enumerate accounts | [!] Residual risk | The `unique` rule still answers "the e-mail has already been taken". Accepted trade-off (see `BACKEND_SECURITY_AUDIT.md`, L-05). |
 | 1.12 | E-mail addresses are verified | [!] Residual risk | Verification is optional by product design (L-06). |
-| 1.13 | Password-reset forms are protected against CSRF | [x] Verified | Both forms contain `@csrf` and the routes use Laravel's `web` middleware group. The reset flow sends no links. |
+| 1.13 | Password-reset forms are protected against CSRF | [x] Verified | Both forms contain `@csrf` and use Laravel's `web` middleware group. |
 
 ## 2. Authorization
 
@@ -73,8 +73,16 @@ Legend:
 | --- | --- | --- | --- |
 | 5.1 | CSRF protection is active on all web routes | [x] Verified | Default `web` middleware group, no exclusions, `@csrf` in every form. |
 | 5.2 | No sensitive operation uses `GET` | [x] Verified | `route:list` shows only `POST`, `PUT`, `PATCH` and `DELETE` for every mutation (logout included). |
-| 5.3 | Cookies and redirects follow the framework defaults | [x] Verified | `http_only`, `same_site=lax`, `redirect()->intended()` after login, `back()` after a mutation. |
+| 5.3 | Cookies and redirects follow safe same-origin rules | [x] Verified | Session cookies are HttpOnly/SameSite; `SafeRedirect` rejects external and malformed intended URLs. |
 | 5.4 | CSRF rejection is exercised by an automated test | [!] Residual risk | Laravel skips the CSRF middleware when the application runs in the `testing` environment, so a feature test cannot assert it. It was verified by reading the middleware configuration and by the presence of `@csrf` in every form. |
+
+## 5b. Host and browser protections
+
+| # | Control | Status | Notes |
+| --- | --- | --- | --- |
+| 5b.1 | Host headers are allow-listed | [~] Configured | Laravel `TrustHosts` is configured for the hostname in `APP_URL`; production behavior still needs a deployment smoke test because this local app runs in the testing environment. |
+| 5b.2 | Common browser security headers are set | [x] Verified | Middleware sets `nosniff`, frame denial, no-referrer and a restrictive permissions policy; HSTS is sent in production over HTTPS. |
+| 5b.3 | Reset links do not leak through Referer headers | [x] Verified | Global `Referrer-Policy: no-referrer`. |
 
 ## 6. Mass assignment
 
@@ -92,10 +100,10 @@ Legend:
 | --- | --- | --- | --- |
 | 7.1 | Login is limited | [x] Verified | 5 attempts per minute and per e-mail/IP. |
 | 7.2 | Registration (account creation) is limited | [x] Verified | `throttle:register`, 5/minute per IP. |
-| 7.3 | Password reset is limited | [x] Verified | `throttle:5,1` on both the e-mail-check and reset-submission routes. |
+| 7.3 | Password reset is limited | [x] Verified | Route limit plus broker token throttle; verified by tests. |
 | 7.4 | Idea submission is limited | [x] Verified | `throttle:ideas`, 5/hour per account; verified by test. |
 | 7.5 | Registration and team endpoints are limited | [x] Verified | `throttle:registration` and `throttle:teams`, 20/minute per account; verified by test. |
-| 7.6 | Administrative endpoints are limited | [~] Partially verified | Administrators are authenticated and authorised, and their actions are rare and audited, but no explicit throttle is applied to the administration routes. |
+| 7.6 | Administrative endpoints are limited | [x] Verified | `throttle:admin-actions`, 60 requests/minute per admin account and client address. |
 | 7.7 | Expensive search and statistics endpoints are bounded | [~] Partially verified | Search terms are length-bounded and all lists are paginated. The learner dashboard is not paginated (L-03). |
 | 7.8 | Conversation creation and answers are rate limited | [x] Verified | `throttle:message-create` (5/hour) and `throttle:message-reply` (60/hour), keyed by account; verified by test. |
 
@@ -115,9 +123,9 @@ Legend:
 | 7b.10 | Message bodies are escaped | [x] Verified | Rendered with `{{ }}`; no `{!! !!}` in `resources/views`. |
 | 7b.11 | The conversation and message input is validated | [x] Verified | Subject ≤ 120, body ≤ 4 000; verified by test. |
 | 7b.12 | CSRF protection on the messaging forms | [x] Verified | `@csrf` in every messaging form; all writes are `POST`. |
-| 7b.13 | Foreign keys, indexes and transactions protect the data | [x] Verified | FKs with `restrictOnDelete` / `cascadeOnDelete`, indexes on `(conversation_id, created_at)` and `(conversation_id, read_at)`, both writes inside `DB::transaction()`. |
+| 7b.13 | Foreign keys, indexes and transactions protect the data | [x] Verified | Foreign keys preserve conversation and message rows with `nullOnDelete` for deleted users, plus indexes on `(conversation_id, created_at)` and `(conversation_id, read_at)`; both writes use `DB::transaction()`. |
 | 7b.14 | Privileged attributes are not mass-assignable | [x] Verified | `Conversation::$fillable = ['subject']`; `Message` uses `$guarded = ['*']`. |
-| 7b.15 | The private history cannot be destroyed by a cascade | [x] Verified | `User::deletionBlockers()` reports conversations and messages, and the deletion flow refuses instead of cascading. |
+| 7b.15 | The private history cannot be destroyed by a cascade | [x] Verified | Deleting an account keeps conversations and messages while `ON DELETE SET NULL` removes the user association. |
 | 7b.16 | There is no destructive delete for conversations | [x] Verified | Only close / reopen exist; both are audited. |
 | 7b.17 | The message listings do not issue one query per row | [x] Verified | `MessageQueryEfficiencyTest` compares the query count for one and for five conversations. |
 | 7b.18 | Conversation identifiers are not sequential | [!] Residual risk | They are sequential, but a non-participant is refused with `403` before any body is rendered, so the id cannot be used to read data (L-09). |
@@ -141,8 +149,8 @@ Legend:
 | 9.6 | Frequently filtered foreign keys are indexed | [x] Verified | Eight missing indexes added by the new migration. |
 | 9.7 | Multi-step writes are transactional | [x] Verified | Team creation, registration, unregistration and disbanding all run inside `DB::transaction()`; verified by the "no partial registrations" test. |
 | 9.8 | Capacity limits are protected against concurrent requests | [~] Partially verified | Unique indexes guarantee no duplicates. On SQLite the capacity check is **not** race-free (no row locks): mitigated by the busy timeout, WAL and three-attempt transactions. A strict guarantee requires MySQL/PostgreSQL. |
-| 9.9 | Historical records are never destroyed by a cascade | [x] Verified | `restrictOnDelete` on `created_by`, `author_id` and `leader_id`; the account deletion flow refuses rather than cascades. |
-| 9.10 | Nullable and non-nullable columns match the domain | [x] Verified | Inspected column by column; no column is nullable while the domain requires a value (except the explicitly optional ones). |
+| 9.9 | Historical records are never destroyed by a cascade | [x] Verified | `nullOnDelete` on historical author references preserves content and clears the deleted account association; team leadership transfers to a remaining member where possible. |
+| 9.10 | Nullable and non-nullable columns match the domain | [x] Verified | Historical author references are nullable specifically to support privacy-preserving account deletion. |
 
 ## 10. Secrets and configuration
 
@@ -161,7 +169,7 @@ Legend:
 | # | Control | Status | Notes |
 | --- | --- | --- | --- |
 | 11.1 | Stack traces are not shown to users in production | [x] Verified | Laravel's default handler renders a generic error page when `APP_DEBUG` is off. |
-| 11.2 | Passwords and tokens are never logged by application code | [x] Verified | The framework never flashes `password`, `password_confirmation` or `current_password`; YouCast has no third-party messaging notifier. The password-reset flow sends no e-mail and logs no password. The development-only `log` mail transport still writes other outbound e-mail bodies; use Mailpit or SMTP outside local development and never enable it in production. |
+| 11.2 | Passwords and tokens are never logged by application code | [x] Verified | The exception handler never flashes passwords or reset tokens. Reset links go through the configured mailer; the `log` mailer writes complete messages, so production must use SMTP. Lockout logs include only the client IP. |
 | 11.3 | Logs contain no unnecessary personal data | [x] Verified | The lockout listener records the IP address only; the audit log records the actor id, not the payload. |
 | 11.4 | Security-relevant events are logged | [x] Verified | Authentication lockouts are logged; administrative actions are recorded in `audit_logs` with the actor and a timestamp. |
 | 11.5 | Diagnostic information is preserved for legitimate debugging | [x] Verified | `LOG_LEVEL=debug` locally; exceptions are still reported through the standard handler. |
@@ -172,7 +180,7 @@ Legend:
 | --- | --- | --- | --- |
 | 12.1 | Composer dependencies are free of known advisories | [x] Verified | `composer audit` → *No security vulnerability advisories found.* |
 | 12.2 | The lock file matches `composer.json` | [x] Verified | `composer validate` → *./composer.json is valid*. The lock hash was refreshed without changing any package version. |
-| 12.3 | npm dependencies are free of known advisories | [!] Residual risk | `npm audit` → 7 advisories (2 moderate, 5 high) in the Tailwind CSS 3 build chain (`braces`, `chokidar`, `fast-glob`, `micromatch`, `postcss-selector-parser`). They are build-time only and never reach the browser. The offered fix (`tailwindcss@4`) is a breaking change to the styling pipeline and was deliberately not applied. |
+| 12.3 | npm dependencies are free of known advisories | [!] Residual risk | `npm audit` → 7 advisories (2 moderate, 5 high) in build-time Tailwind CSS 3 tooling (`braces`, `chokidar`, `fast-glob`, `micromatch`, `postcss-selector-parser`). The braces advisory has no patched npm release; the parser fix is outside the installed 6.x range. The proposed Tailwind CSS 4 upgrade is a breaking styling-pipeline change, so it was not applied. These dependencies run during trusted asset builds and are not served to visitors. |
 | 12.4 | No dependency was added or upgraded for this work | [x] Verified | The change set contains no new Composer or npm package. |
 
 ## 13. Tests and verification

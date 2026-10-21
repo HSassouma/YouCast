@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Enums\ActivityType;
+use App\Models\Activity;
 use Carbon\Carbon;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -49,6 +50,38 @@ class UpdateActivityRequest extends FormRequest
                 if ($this->filled('min_team_size') && $this->filled('max_team_size')
                     && (int) $this->input('min_team_size') > (int) $this->input('max_team_size')) {
                     $validator->errors()->add('max_team_size', 'La taille maximale doit être supérieure ou égale à la taille minimale.');
+                }
+            }
+
+            /** @var Activity|null $activity */
+            $activity = $this->route('activity');
+
+            if ($type === ActivityType::TeamChallenge->value) {
+                if ($this->filled('capacity') && $this->filled('min_team_size')
+                    && (int) $this->input('capacity') < (int) $this->input('min_team_size')) {
+                    $validator->errors()->add('capacity', 'La capacité doit permettre au moins une équipe complète.');
+                }
+            }
+
+            if ($activity) {
+                if ($this->filled('capacity') && $activity->filledCount() > (int) $this->input('capacity')) {
+                    $validator->errors()->add('capacity', 'La capacité ne peut pas être inférieure au nombre de personnes déjà inscrites.');
+                }
+
+                if ($type !== $activity->type->value && ($activity->teams()->exists() || $activity->registrations()->exists())) {
+                    $validator->errors()->add('type', 'Le type ne peut pas être changé après la création d’équipes ou d’inscriptions.');
+                }
+
+                if ($type === ActivityType::TeamChallenge->value) {
+                    $teamSizes = $activity->teams()->withCount('members')->get(['id', 'is_registered']);
+
+                    if ($this->filled('max_team_size') && $teamSizes->contains(fn ($team) => $team->members_count > (int) $this->input('max_team_size'))) {
+                        $validator->errors()->add('max_team_size', 'La taille maximale ne peut pas être inférieure au nombre de membres d’une équipe existante.');
+                    }
+
+                    if ($this->filled('min_team_size') && $teamSizes->contains(fn ($team) => $team->is_registered && $team->members_count < (int) $this->input('min_team_size'))) {
+                        $validator->errors()->add('min_team_size', 'La taille minimale ne peut pas dépasser la taille d’une équipe déjà inscrite.');
+                    }
                 }
             }
 

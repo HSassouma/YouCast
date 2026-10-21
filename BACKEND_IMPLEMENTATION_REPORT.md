@@ -36,7 +36,7 @@ greenfield project:
 | `php artisan test` | **52 passed** (12 failures on the very first run were caused by a missing `public/build/manifest.json`; after `npm install && npm run build` the whole suite passed) |
 | `composer validate` | `./composer.json is valid but your composer.lock has some errors` |
 | `composer audit` | `No security vulnerability advisories found.` |
-| `npm audit` | 7 advisories (2 moderate, 5 high) in the Tailwind CSS 3 build chain |
+| `npm audit` | 7 advisories (2 moderate, 5 high) in build-time Tailwind CSS 3 tooling; see the detailed limitation below |
 | `vendor/bin/pint --test` | 4 pre-existing style violations |
 
 ---
@@ -68,7 +68,7 @@ outside the agreed backend hardening).
 | `app/Models/TeamMember.php` | `$guarded = ['*']` — the membership role is a privilege and is never mass-assigned. |
 | `app/Models/Registration.php` | `$guarded = ['*']` — a registration row is entirely server-owned. |
 | `app/Models/AuditLog.php` | `$guarded = ['*']`; `record()` assigns each attribute explicitly. |
-| `app/Models/User.php` | New `deletionBlockers()` listing the historical records that prevent an account from being deleted. |
+| `app/Models/User.php` | Historical records remain available after deletion through nullable author references, without retaining the user's account. |
 
 ### Policies and middleware
 
@@ -95,8 +95,8 @@ outside the agreed backend hardening).
 | `app/Http/Controllers/Admin/ChallengeIdeaController.php` | `authorize('moderate', …)` replaces the ad-hoc `abort_unless`; conversion uses the new Form Request; moderation state is assigned explicitly; the converted activity is created through `Activity::createDraft()`. |
 | `app/Http/Controllers/ChallengeIdeaController.php` | Ownership and the initial `IdeaStatus::Pending` state are assigned explicitly instead of relying on the database default. |
 | `app/Http/Controllers/RegistrationController.php` | The cancellation route now authorizes through the policy (`cancelRegistration`). |
-| `app/Http/Controllers/ProfileController.php` | Account deletion is validated and refused with a readable message when the account still owns ideas, activities or led teams (previously an unhandled HTTP 500). |
-| `app/Http/Controllers/Auth/PasswordResetLinkController.php` | The simplified flow opens the password form for a known address and shows the registration message otherwise. This intentionally reveals account existence and is **not production-safe** (see H-03). |
+| `app/Http/Controllers/ProfileController.php` | Account deletion verifies the password, transfers team leadership where possible, and retains historical content without its deleted author. |
+| `app/Http/Controllers/Auth/PasswordResetLinkController.php`, `NewPasswordController.php`, `User.php` | Replaced account-by-email reset with Laravel's hashed, expiring, single-use password broker token; response is generic for account privacy. SMTP required for production. |
 
 ### Services
 
@@ -172,10 +172,10 @@ makes SQLite behave under concurrent writes (busy timeout, WAL, retries).
 
 | Area | Tests |
 | --- | --- |
-| Authentication | simplified password reset without e-mail (documented non-production limitation) · login is rate limited after repeated failures · logout invalidates the session |
+| Authentication | single-use e-mail-token password reset with expiry and non-enumerating responses · login is rate limited after repeated failures · logout invalidates the session |
 | Authorization / IDOR | a learner cannot cancel another learner's registration · a learner cannot disband a team they do not belong to · a team from another activity is not accepted · a learner cannot reach the administration moderation pages · an idea cannot be reviewed or converted twice |
 | Mass assignment | activity ownership and status cannot be forced by the request · idea moderation state cannot be forced by the learner · privileged model attributes are not mass-assignable · public registration never creates an administrator |
-| Data integrity | an account owning historical records cannot be deleted · an account without owned records can still be deleted · a failed team registration leaves no partial registrations |
+| Data integrity | accounts with historical records can be deleted while history remains anonymous · leadership transfers where possible · a failed team registration leaves no partial registrations |
 | Registration | registration is rejected for an unpublished activity · the registration endpoint is rate limited |
 | Moderation | idea submission is rate limited |
 | Validation | a registration deadline after the activity start is rejected · activity fields are length limited |
@@ -200,7 +200,7 @@ All commands were run from the repository root on Windows / PowerShell.
 | `composer validate --no-check-publish` | `./composer.json is valid` (was reporting a lock file error). |
 | `composer audit` | `No security vulnerability advisories found.` |
 | `npm install` / `npm run build` | 160 packages installed; `vite v7.3.7` build succeeded — `public/build/manifest.json`, `app-Ol32SI4O.css` (51.31 kB), `app-WC-ZjLzv.js` (106.90 kB). |
-| `npm audit` | 7 vulnerabilities (2 moderate, 5 high) — all in the Tailwind CSS 3 build chain (`braces`, `chokidar`, `fast-glob`, `micromatch`, `postcss-selector-parser`). `npm audit fix --force` would install `tailwindcss@4.3.3`, a breaking change to the visual toolchain. **Not applied** — these are build-time packages that are never shipped to the browser, and the fix would alter the styling pipeline. |
+| `npm audit` | 7 vulnerabilities (2 moderate, 5 high) — in build-time Tailwind CSS 3 tooling (`braces`, `chokidar`, `fast-glob`, `micromatch`, `postcss-selector-parser`). The braces advisory has no patched npm release; the selector-parser fix is 7.1.6, outside the installed 6.x range. The audit offers Tailwind CSS 4, a breaking pipeline upgrade. These dependencies run during asset builds and are not served to browsers. `npm audit fix --force` would install `tailwindcss@4.3.3`, a breaking change to the visual toolchain. **Not applied** — the affected packages are build-time dependencies; the build should use trusted source files. |
 | `php artisan route:list --except-vendor` | 47 application routes. |
 | Playwright smoke test (Chromium, headless) | `SMOKE TEST PASSED` — no console errors, no failed requests, no 5xx responses. Covered: home page, catalogue, guest redirect, administrator login, administrator dashboard, activity list, activity creation, publication, rename (slug regeneration), learner login, learner dashboard, registration, cancellation, idea submission, idea moderation, idea conversion, profile page. |
 
@@ -212,21 +212,15 @@ after `npm run build` and are not related to any code change.
 
 ## 7. Migration safety
 
-* No existing migration was edited or deleted. The only schema change is the
-  new, additive index migration.
-* No destructive command (`migrate:fresh`, `db:wipe`, `migrate:reset`) was
-  ever run against the project database.
-* The new migration was applied to the project database and to a disposable
-  SQLite file, including a rollback and a re-apply.
-* The migration only adds indexes: no column is created, altered or dropped,
-  and no data is rewritten. Rolling it back removes the indexes and nothing
-  else.
-* `created_by`, `author_id` and `leader_id` keep `ON DELETE RESTRICT`, so the
-  history of the BDE can never be destroyed by a cascade.
-
----
-
-## 8. Performance observations
+* Existing migrations were not edited or deleted. Schema changes are additive:
+  the foreign-key index migration and a later migration that allows historical
+  author references to become null when an account is deleted.
+* No destructive command (`migrate:fresh`, `db:wipe`, `migrate:reset`) was run
+  against the project database.
+* The account-deletion migration preserves activities, ideas, teams, messages
+  and conversations while anonymizing the deleted account's authorship.
+* Dependent rows retain their explicit cascade or restrict rules; historical
+  author references use `ON DELETE SET NULL`.## 8. Performance observations
 
 | Observation | Evidence | Action |
 | --- | --- | --- |
@@ -294,12 +288,10 @@ $landing = $request->user()->isAdmin()
     ? route('admin.activities.index', absolute: false)
     : route('activities.index', absolute: false);
 
-return redirect()->intended($landing);
+return SafeRedirect::intended($request, $landing);
 ```
 
-`intended()` is kept so that a user who was redirected to the login page by
-the `auth` middleware still lands on the page they asked for; the role-based
-value is the default.
+`SafeRedirect` keeps the saved destination only when it is a same-origin path or URL matching `APP_URL`; external or malformed targets use the role-based landing page instead.
 
 ### 10.3 Administrator "unpublish" action
 
@@ -337,10 +329,10 @@ prop, so a guest never sees a registration state.
 
 **Data model** � `database/migrations/2026_10_21_090000_create_conversations_and_messages_tables.php`
 
-* `conversations` � `student_id` (FK, `restrictOnDelete`), `subject` (120),
+* `conversations` — `student_id` (FK, `nullOnDelete`), `subject` (120),
   `status` (`open` / `closed`), `last_message_at`, timestamps.
-* `messages` � `conversation_id` (FK, `cascadeOnDelete`), `user_id` (FK,
-  `restrictOnDelete`), `body`, `read_at`, timestamps, with indexes on
+* `messages` — `conversation_id` (FK, `cascadeOnDelete`), `user_id` (FK,
+  `nullOnDelete`), `body`, `read_at`, timestamps, with indexes on
   `(conversation_id, created_at)` and `(conversation_id, read_at)`.
 
 **Models** � `App\Models\Conversation` (`$fillable = ['subject']`; the owner,
@@ -405,9 +397,7 @@ is rendered on a public page. Both properties are covered by
 `PrivateMessagingTest`, including `Http::assertNothingSent()` on opening a
 conversation and on both reply paths.
 
-**Account deletion** � `User::deletionBlockers()` now also reports *private
-conversations* and *messages you wrote*, because the foreign keys restrict the
-deletion. The private history therefore cannot be destroyed by a cascade.
+**Account deletion** — the account and personal details can now be removed while ideas, activities, conversations and messages remain with an anonymous author label.
 
 ### 10.6 Files changed in the second round
 
@@ -443,7 +433,7 @@ deletion. The private history therefore cannot be destroyed by a cascade.
 * `app/Http/Controllers/ActivityController.php` � registration state of the visitor.
 * `app/Policies/ActivityPolicy.php` � `unpublish()`.
 * `app/Providers/AppServiceProvider.php` � policy registration, `message-create` and `message-reply` limiters.
-* `app/Models/User.php` � `conversations()`, `messages()`, extended `deletionBlockers()`.
+* `app/Models/User.php` — `conversations()` and `messages()` relationships support retained anonymous history.
 * `routes/web.php` � the messaging routes and the unpublish route.
 * `resources/views/components/activity-card.blade.php` � registration badge, team size, location.
 * `resources/views/activities/index.blade.php` � passes the registration state.

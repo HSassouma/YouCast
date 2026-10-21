@@ -4,7 +4,7 @@
     $unreadMessages = $unreadMessages ?? 0;
 @endphp
 
-<nav x-data="{ open: false }" class="sticky top-0 z-40 border-b border-brand-100/70 bg-white/85 shadow-soft backdrop-blur-xl">
+<nav x-data="{ open: false }" class="sticky top-0 z-40 border-b border-slate-200 bg-white">
     <div class="mx-auto max-w-content px-4 sm:px-6 lg:px-8">
         <div class="flex h-16 items-center justify-between gap-4">
             {{-- Brand --}}

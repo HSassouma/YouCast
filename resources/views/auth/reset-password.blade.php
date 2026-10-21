@@ -4,16 +4,15 @@
     <div class="px-6 py-8 sm:px-8">
         <h1 class="text-xl font-bold tracking-tight text-slate-900">Nouveau mot de passe</h1>
         <p class="mt-1.5 text-sm text-slate-600">
-            Choisissez un nouveau mot de passe pour le compte suivant.
+            Ouvrez le lien reçu par e-mail pour choisir un nouveau mot de passe.
         </p>
 
-        <div class="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-700">
-            <span class="text-slate-500">Compte :</span>
-            <span id="reset-account-email" class="font-medium">{{ $email }}</span>
-        </div>
 
         <form method="POST" action="{{ route('password.store') }}" class="mt-6 space-y-5">
             @csrf
+            <input type="hidden" name="token" value="{{ $token }}">
+            <input type="hidden" name="email" value="{{ old('email', $email) }}">
+            <x-input-error :messages="$errors->get('email')" class="mt-2" />
 
             <div>
                 <x-input-label for="password" value="Nouveau mot de passe" required />

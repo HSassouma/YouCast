@@ -11,7 +11,9 @@ use App\Policies\ChallengeIdeaPolicy;
 use App\Policies\ConversationPolicy;
 use App\Policies\TeamPolicy;
 use App\Support\UnreadMessages;
+use App\Models\User;
 use Illuminate\Auth\Events\Lockout;
+use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\Paginator;
@@ -37,6 +39,15 @@ class AppServiceProvider extends ServiceProvider
         Paginator::defaultView('pagination::youcast');
         Paginator::defaultSimpleView('pagination::youcast-simple');
 
+        ResetPassword::createUrlUsing(function (User $user, string $token): string {
+            $path = route('password.reset', [
+                'token' => $token,
+                'email' => $user->getEmailForPasswordReset(),
+            ], absolute: false);
+
+            return rtrim((string) config('app.url'), '/').$path;
+        });
+
         Gate::policy(Activity::class, ActivityPolicy::class);
         Gate::policy(ChallengeIdea::class, ChallengeIdeaPolicy::class);
         Gate::policy(Team::class, TeamPolicy::class);
@@ -52,6 +63,18 @@ class AppServiceProvider extends ServiceProvider
 
         RateLimiter::for('register', function (Request $request) {
             return Limit::perMinute(5)->by($request->ip());
+        });
+
+        RateLimiter::for('password-confirm', function (Request $request) {
+            return Limit::perMinute(5)->by('user:'.$request->user()->id.'|'.$request->ip());
+        });
+
+        RateLimiter::for('password-change', function (Request $request) {
+            return Limit::perMinute(5)->by('user:'.$request->user()->id.'|'.$request->ip());
+        });
+
+        RateLimiter::for('admin-actions', function (Request $request) {
+            return Limit::perMinute(60)->by('admin:'.$request->user()->id.'|'.$request->ip());
         });
 
         RateLimiter::for('ideas', function (Request $request) {

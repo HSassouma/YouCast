@@ -3,7 +3,8 @@
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <meta name="description" content="YouCast — la plateforme des activités, des équipes et des idées du BDE YouCode.">
 <title>{{ $title ?? config('app.name', 'YouCast') }}</title>
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="{{ asset('favicon.svg') }}?v=20261021" type="image/svg+xml">
+<link rel="shortcut icon" href="{{ asset('favicon.svg') }}?v=20261021" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.bunny.net">
 <link href="https://fonts.bunny.net/css?family=figtree:400,500,600,700&display=swap" rel="stylesheet" />
 <link href="https://fonts.bunny.net/css?family=space-grotesk:400,500,600,700&display=swap" rel="stylesheet" />

@@ -1,241 +1,179 @@
+<div align="center">
+
 # YouCast
 
-YouCast is the YouCode BDE platform for publishing challenges, events, and competitions. Learners discover activities, register individually or as teams, and submit ideas for future challenges.
+### La plateforme communautaire du BDE YouCode
 
-The user interface is in **French**; the code, the routes and the database keep
-English identifiers.
+Découvrez les activités, rejoignez une équipe, participez aux défis et proposez vos idées — au même endroit.
 
-## Design system
+![Laravel 12](https://img.shields.io/badge/Laravel-12-ef4444?logo=laravel&logoColor=white)
+![PHP 8.2+](https://img.shields.io/badge/PHP-8.2%2B-777BB4?logo=php&logoColor=white)
+![Interface](https://img.shields.io/badge/interface-Fran%C3%A7ais-7777D9)
+![Base de données](https://img.shields.io/badge/base-SQLite-0f80cc?logo=sqlite&logoColor=white)
 
-The interface uses a mauve blue (`#7777D9`) and cool gray identity, defined as
-Tailwind tokens in `tailwind.config.js` (`brand-*`, `slate-*`, `success-*`,
-`warning-*`, `danger-*`). The reusable Blade components live in
-`resources/views/components/`. The full rationale and the token reference are
-in `DESIGN_IMPLEMENTATION_REPORT.md`.
+[Présentation](#youcast) · [Installation](#installation-windows) · [Lancer le site](#lancer-le-site) · [Utilisation](#comment-utiliser-youcast) · [Tests](#vérification-et-tests)
 
-## Stack
+</div>
 
-- Laravel 12 (PHP 8.2+)
-- SQLite
-- Blade + Tailwind CSS 3 + Vite
-- Alpine.js (navigation, dropdown and modal only)
+---
 
-## Requirements
+## YouCast
 
-- PHP 8.2+ with sqlite, mbstring, xml, curl, zip, tokenizer, and bcmath extensions
-- Composer
-- Node.js 18+ and npm
+YouCast est une application web pour le BDE YouCode. Les étudiants y trouvent les événements et challenges, s’inscrivent seuls ou en équipe, proposent de nouvelles idées et échangent en privé avec le BDE. Les administrateurs disposent d’un espace dédié pour gérer les activités et les inscriptions.
 
-## Setup
+L’interface du site est en français. Le projet utilise Laravel, Blade, Tailwind CSS, Alpine.js et Vite.
 
-```bash
+## Parcours dans l’application
+
+| Espace | Ce qu’on peut y faire |
+| --- | --- |
+| **Accueil** | Découvrir YouCast et accéder aux principales informations. |
+| **Compte étudiant** | Créer son compte, gérer son profil, consulter son tableau de bord et ses inscriptions. |
+| **Activités** | Rechercher des activités, consulter leurs informations et s’inscrire selon le format proposé. |
+| **Équipes** | Créer une équipe, partager son code d’invitation, la rejoindre et l’inscrire avec son responsable. |
+| **Idées** | Envoyer une proposition de challenge et suivre son traitement par le BDE. |
+| **Messages** | Contacter le BDE dans une conversation privée. |
+| **Administration** | Créer et publier des activités, gérer les idées, consulter les inscriptions et répondre aux messages. |
+
+### Cycle d’une activité
+
+```mermaid
+flowchart LR
+    A[Brouillon créé par le BDE] --> B[Publication]
+    B --> C[Inscriptions des étudiants]
+    C --> D[Fin de l’activité]
+    D --> E[Masquée aux étudiants]
+    E --> F[Historique et participants conservés]
+    F --> G[Consultation par l’administration]
+```
+
+Une activité terminée disparaît automatiquement des pages étudiantes après sa date de fin. Son activité, ses inscriptions et son historique restent conservés dans la base de données et visibles par l’administration.
+
+## Prérequis
+
+- Windows 10 ou 11
+- PHP 8.2 ou plus, avec les extensions SQLite, Mbstring, OpenSSL, PDO, Tokenizer, XML, Ctype et Fileinfo
+- [Composer](https://getcomposer.org/)
+- [Node.js et npm](https://nodejs.org/)
+
+## Installation Windows
+
+Ouvre PowerShell dans le dossier du projet, puis installe les dépendances PHP et JavaScript :
+
+```powershell
 composer install
-cp .env.example .env
-php artisan key:generate
-touch database/database.sqlite
+npm ci
+```
+
+Pour une **première installation seulement**, prépare la configuration locale et la base SQLite :
+
+```powershell
+if (-not (Test-Path .env)) {
+    Copy-Item .env.example .env
+    php artisan key:generate
+}
+if (-not (Test-Path database/database.sqlite)) { New-Item -ItemType File -Path database/database.sqlite | Out-Null }
 php artisan migrate
-npm install
+```
+
+`key:generate` sert à créer la clé lors de la première installation. Ne régénère pas la clé d’une installation existante : ça invaliderait les données chiffrées et les sessions en cours. Si `.env` existe déjà, conserve-le et ne le remplace pas par `.env.example`.
+
+Compile ensuite les fichiers de l’interface :
+
+```powershell
 npm run build
 ```
 
-Seed demo data (optional):
+### Données de démonstration facultatives
 
-```bash
+Pour remplir une base de développement avec quelques comptes et activités :
+
+```powershell
 php artisan db:seed
 ```
 
-Demo accounts (password: `password`):
+La base de démonstration crée `admin@youcode.local` et `learner@youcode.local`, avec le mot de passe `password`. Ces identifiants sont réservés au développement local : ne lance pas le seeder en production et remplace ou supprime ces comptes avant tout déploiement.
 
-- BDE admin: `admin@youcode.local`
-- Learner: `learner@youcode.local`
+## Lancer le site
 
-## Development
+La commande de développement démarre le serveur Laravel, Vite et les outils locaux :
 
-```bash
+```powershell
+composer run dev
+```
+
+Ouvre ensuite [http://127.0.0.1:8000](http://127.0.0.1:8000).
+
+Tu peux aussi ouvrir deux fenêtres PowerShell dans le dossier du projet et lancer séparément :
+
+```powershell
 php artisan serve
+```
+
+```powershell
 npm run dev
 ```
 
-The app is a server-rendered Laravel project. Preview environments should expose the Laravel HTTP port.
+La seconde commande recharge les styles et les scripts pendant le développement. Si tu as déjà compilé l’interface avec `npm run build`, elle peut être servie depuis les fichiers compilés sans le serveur Vite.
 
-## Password reset (simplified, non-production)
+## Comment utiliser YouCast
 
-The **Mot de passe oublié ?** link on the login page opens
-`/forgot-password`. The user enters an e-mail address. If an account exists,
-the application displays a new-password form; if not, it displays a styled
-message with a link to registration. No e-mail, reset link, OTP or administrator
-approval is used.
+### Étudiant
 
-The two POST routes are rate-limited to five requests per minute per IP. The
-password is validated with the project password rules, hashed with Laravel's
-hashing mechanism, and the account's remember token is rotated. The request is
-bound to the current session and cannot be replayed after a successful change.
+1. Crée un compte depuis **Inscription** puis connecte-toi.
+2. Ouvre **Activités** pour trouver un événement ou un challenge.
+3. Inscris-toi directement pour une activité individuelle.
+4. Pour un challenge d’équipe, crée une équipe ou rejoins-en une avec le code reçu. Le responsable inscrit ensuite l’équipe.
+5. Consulte tes inscriptions et tes idées depuis le tableau de bord.
+6. Utilise **Messages** pour contacter le BDE en privé.
 
-> **Security limitation:** this flow only checks that the e-mail exists. It does
-> not prove that the visitor owns that address. Anyone who knows a registered
-> address can change the corresponding password. It must not be used in
-> production without an additional verified factor (e-mail token, SMS OTP,
-> TOTP/recovery codes, or in-person administrator verification).
+Les pages d’activités sont réservées aux membres connectés. Les activités terminées sont masquées automatiquement aux étudiants, mais restent disponibles dans l’historique de l’administration.
 
-### Mail configuration
+### Administrateur BDE
 
-`APP_URL` must still be the public origin of the application in every deployed
-environment. Other authentication e-mails (for example e-mail verification)
-must not build links from the request `Host` header.
+Un utilisateur doit d’abord avoir un compte. Depuis PowerShell, une personne de confiance qui a accès au projet peut lui donner le rôle administrateur :
 
-Local development with the default `log` transport writes e-mails to
-`storage/logs/laravel.log`:
-
-```dotenv
-APP_URL=http://localhost:8000
-MAIL_MAILER=log
-MAIL_FROM_ADDRESS="hello@example.com"
-MAIL_FROM_NAME="${APP_NAME}"
+```powershell
+php artisan youcast:promote-admin adresse@example.com
 ```
 
-The log transport stores complete outbound messages, so it is for local
-development only. For a local inbox that does not write messages to application
-logs, run [Mailpit](https://mailpit.axllent.org/) and use its SMTP port and web
-UI (`http://localhost:8025`):
+Connecte-toi ensuite avec ce compte. L’espace d’administration permet de créer un brouillon, le publier, gérer les idées, voir les noms des participants inscrits et répondre aux conversations. La liste nominative des participants est visible uniquement dans l’administration.
 
-```bash
-docker run --rm -p 1025:1025 -p 8025:8025 axllent/mailpit
-```
+## Vérification et tests
 
-```dotenv
-MAIL_MAILER=smtp
-MAIL_HOST=127.0.0.1
-MAIL_PORT=1025
-MAIL_SCHEME=null
-MAIL_USERNAME=null
-MAIL_PASSWORD=null
-```
+La suite complète utilise une base SQLite en mémoire et ne modifie pas la base locale du site :
 
-For real delivery, configure the SMTP credentials supplied by your mail
-provider. The exact variables used by this Laravel version are:
-
-```dotenv
-APP_URL=https://youcast.example
-MAIL_MAILER=smtp
-MAIL_HOST=smtp.example.com
-MAIL_PORT=587
-MAIL_SCHEME=null
-MAIL_USERNAME=your-smtp-username
-MAIL_PASSWORD=your-smtp-password
-MAIL_FROM_ADDRESS="no-reply@youcast.example"
-MAIL_FROM_NAME="${APP_NAME}"
-```
-
-Leave `MAIL_SCHEME=null` for the normal STARTTLS setup on port 587; Laravel
-selects implicit TLS automatically for port 465. Use a sender address whose
-domain is authorized by the SMTP provider (SPF/DKIM). Never commit real SMTP
-credentials. After editing `.env`:
-
-```bash
-php artisan config:clear   # development
-php artisan config:cache   # production
-```
-
-### Testing password reset and e-mail delivery
-
-The password-reset tests use `Mail::fake()` and assert that **no e-mail is
-sent**. `phpunit.xml` also forces the `array` mailer for the rest of the suite.
-
-```bash
-php artisan test tests/Feature/Auth/PasswordResetTest.php
-```
-
-To test the reset flow locally, use a seeded test account: enter its e-mail,
-choose a new password, then sign in with the new password. Other authentication
-e-mails still require the SMTP/Mailpit configuration above; the password-reset
-flow itself does not use it.
-
-## Core features
-
-- Public site (home + "À propos") presents the product itself; no activity data is ever rendered for visitors.
-- Activity catalogue with search, filtering, capacity, deadlines and team challenges. Members-only: every catalogue or detail URL redirects guests to the login screen.
-- Individual registrations and team registrations (create a team, share a join code, register the team).
-- Learners can register for an activity and cancel while it is published.
-- Learners can submit challenge ideas; administrators review them (pending, accepted, rejected) and turn an accepted idea into a draft activity.
-- Private messaging: a learner opens a conversation with the BDE and answers it from the protected administration inbox.
-- Administrator dashboard with activity management and statistics.
-
-## Private messaging
-
-Learners open a conversation with the BDE from **Messages** in the navigation.
-Administrators answer from **Inbox** in the administration area.
-
-A conversation is private: only the learner who opened it and the BDE
-administrators can read or answer it. The contents are never published to a
-public page and never sent outside YouCast. Administrators close a conversation
-when it is resolved; closing keeps every message.
-
-## Roles
-
-Self-registration always creates a **learner**. The admin role cannot be requested from the browser.
-
-Promote an existing user:
-
-```bash
-php artisan youcast:promote-admin user@example.com
-```
-
-Only a trusted operator with shell access should run this command.
-
-## Tests
-
-```bash
+```powershell
 php artisan test
 ```
 
-The suite runs against an in-memory SQLite database (`phpunit.xml`), so it never
-touches `database/database.sqlite`.
+Pour compiler les ressources de production :
 
-## Security documentation
-
-- `BACKEND_SECURITY_AUDIT.md` — confirmed findings, evidence and fixes.
-- `BACKEND_IMPLEMENTATION_REPORT.md` — what changed and why.
-- `SECURITY_CHECKLIST.md` — verified controls, gaps and residual risks.
-- `DESIGN_IMPLEMENTATION_REPORT.md` — the UI/UX redesign: tokens, pages, browser tests.
-
-## Production checklist
-
-```bash
-APP_ENV=production
-APP_DEBUG=false
-APP_URL=https://youcast.example
-LOG_LEVEL=info
-SESSION_SECURE_COOKIE=true
-MAIL_MAILER=smtp
-```
-
-Configure the remaining SMTP values as described in **Authentication emails and
-password reset** above. Never leave `MAIL_MAILER=log` in production. Generate a
-real `APP_KEY` with `php artisan key:generate`, keep `.env` out of version
-control, and configure `TrustProxies` when the application runs behind a reverse
-proxy so that rate limiting sees the real client address.
-
-## Product decisions in this MVP
-
-- Learners may create their own accounts. Admin access is granted only with `youcast:promote-admin`.
-- Activities are created as drafts and must be published by a BDE administrator. A published activity can be unpublished back to draft; nothing is ever deleted.
-- Individual events and individual challenges register one learner per activity.
-- Team challenges require a team. The leader creates the team, shares a join code, then registers the whole team.
-- Duplicate registrations are blocked by a unique `(user_id, activity_id)` constraint, checked inside a write transaction.
-- Capacity is enforced inside that transaction. SQLite does not support row-level locks, so the guarantee comes from the unique indexes, the database write lock, a busy timeout and transaction retries; a strict capacity guarantee requires MySQL or PostgreSQL.
-- Learners may cancel while the activity is published and cancellation is allowed.
-- There is no waitlist in this version.
-- Accepted ideas can be converted into a draft activity without deleting the original idea.
-- Learners open a private conversation with the BDE; administrators answer from the administration inbox. Only the participants can read a conversation.
-
-## Useful commands
-
-```bash
-php artisan migrate
-php artisan db:seed
-php artisan test
+```powershell
 npm run build
-php artisan youcast:promote-admin email@example.com
 ```
-#   Y o u C a s t  
- 
+
+## Technologies
+
+| Partie | Outils |
+| --- | --- |
+| Serveur | PHP 8.2+, Laravel 12 |
+| Interface | Blade, Tailwind CSS 3, Alpine.js |
+| Compilation des ressources | Vite, Node.js, npm |
+| Stockage local par défaut | SQLite |
+| Tests | PHPUnit via `php artisan test` |
+
+## Documentation du projet
+
+- [Contexte technique pour les contributeurs](AI_CONTEXT.md)
+- [Rapport de sécurité](BACKEND_SECURITY_AUDIT.md)
+- [Rapport d’implémentation backend](BACKEND_IMPLEMENTATION_REPORT.md)
+- [Checklist de sécurité](SECURITY_CHECKLIST.md)
+- [Rapport du design](DESIGN_IMPLEMENTATION_REPORT.md)
+
+## Notes de sécurité
+
+- Ne partage pas le fichier `.env` et ne l’ajoute jamais au contrôle de versions.
+- N’utilise pas les comptes de démonstration en production.
+- Configure un service SMTP avant d’envoyer de vrais e-mails ; le transport `log` est réservé au développement.
+- Pour un déploiement, utilise HTTPS, désactive le mode debug et configure les valeurs de production dans l’environnement du serveur.

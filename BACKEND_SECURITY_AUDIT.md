@@ -36,7 +36,7 @@ SQLite, Node 24.20.0, npm 11.19.0, PHPUnit 11.5.
 | --- | --- | --- | --- |
 | H-01 | High | Account deletion raised an unhandled foreign-key violation (HTTP 500) | Fixed |
 | H-02 | High | Privileged attributes were mass-assignable on six models | Fixed |
-| H-03 | Critical | Password reset can be completed with only an e-mail address, and reveals whether an account exists | Reopened by product decision / documented non-production risk |
+| H-03 | Critical | Password reset can be completed with only an e-mail address, and reveals whether an account exists | Fixed: expiring single-use Laravel broker token, generic response, and broker throttling |
 | H-04 | High | Registration and team endpoints had no rate limiting | Fixed |
 | M-01 | Medium | Foreign-key columns were not indexed (SQLite does not index them automatically) | Fixed |
 | M-02 | Medium | "Row locks" do not exist on SQLite — the documented concurrency guarantee was inaccurate | Mitigated / documented |
@@ -78,10 +78,10 @@ execution.
 
 ## 3. Confirmed findings, evidence and fixes
 
-### H-01 — Account deletion crashed with a foreign-key violation
+### H-01 — Account deletion with historical records
 
-**Severity:** High — availability and data-integrity defect reachable by any
-learner from the profile page.
+**Severity:** High — the original delete path raised a foreign-key error for
+accounts with historical BDE records.
 
 **Evidence**
 
@@ -91,28 +91,25 @@ learner from the profile page.
   — `foreignId('created_by')->constrained('users')->restrictOnDelete()`
 * `database/migrations/2026_10_19_100300_create_teams_table.php:16`
   — `foreignId('leader_id')->constrained('users')->restrictOnDelete()`
-* `app/Http/Controllers/ProfileController.php` (before the fix) called
-  `$user->delete()` without checking those references.
+* `app/Http/Controllers/ProfileController.php` handles account deletion and
+  team-leadership transfer explicitly.
+* `database/migrations/2026_10_21_110000_allow_account_deletion_with_anonymized_history.php`
+  changes historical author references to nullable `ON DELETE SET NULL`.
 
-**Attack / failure scenario:** a learner who has submitted a challenge idea,
-created an activity or leads a team presses *Delete account* with the correct
-password. SQLite raises `SQLSTATE[23000]: ... FOREIGN KEY constraint failed`,
-which was not handled, so the browser showed a Laravel 500 error page and the
-account was not deleted. The same happened for an administrator who had
-created activities. This is also a mild denial of service on the deletion
-endpoint.
+**Failure scenario:** a learner or administrator with authored activities,
+ideas, teams or messages could not remove their account without either losing
+history or receiving a database constraint error.
 
 **Fix**
 
-* `app/Models/User.php` — new `deletionBlockers(): array` that lists the
-  historical records still owned by the account.
-* `app/Http/Controllers/ProfileController.php` — the deletion request is now
-  validated and rejected with a readable message in the `userDeletion` error
-  bag when the account still owns ideas, activities or led teams. The rows are
-  deliberately **kept** (history is not destroyed) and the account is not
-  deleted.
+* Historical content is retained while `created_by`, `author_id`, `leader_id`,
+  `student_id` and message `user_id` references are cleared by the database.
+* `ProfileController` verifies the current password, transfers a team to an
+  existing member when possible, then logs out and deletes the account.
+* Logging out before deletion prevents the session guard from saving a rotated
+  remember token and recreating the deleted user row.
 
-**Regression test:** `tests/Feature/SecurityRegressionTest.php::test_account_owning_historical_records_cannot_be_deleted`
+**Regression test:** `tests/Feature/SecurityRegressionTest.php::test_account_with_historical_records_can_be_deleted_without_losing_bde_history`
 and `::test_account_without_owned_records_can_still_be_deleted`.
 
 ---
@@ -171,44 +168,24 @@ code.*
 
 ### H-03 — Password reset without proof of e-mail ownership
 
-**Severity:** Critical — account takeover and account enumeration (OWASP
-Identification and Authentication Failures).
+**Severity:** Critical — account takeover and account enumeration.
 
-**Status:** reopened by an explicit product decision. This is a documented
-non-production limitation, not a fixed security control.
+**Status:** Fixed. Password recovery now uses Laravel's password broker. The
+broker stores a hashed token, applies the configured 60-minute expiry and
+per-address throttle, and only changes the account password when the submitted
+e-mail and token match. A token is deleted after successful use. The response
+to a reset request is the same for known and unknown addresses.
 
-**Current behaviour**
+Reset links are generated from `APP_URL`, not the request's `Host` header. The
+application sends `Referrer-Policy: no-referrer` so the token-bearing URL is
+not copied into a cross-origin `Referer`. The request and submission endpoints
+are rate-limited, and reset tokens are excluded from flashed validation input.
+The production deployment must use a real SMTP provider; the `log` mailer is
+for local development only because it writes the complete reset link to logs.
 
-`app/Http/Controllers/Auth/PasswordResetLinkController.php` looks up the
-submitted address. A known address opens the new-password form; an unknown
-address displays a distinct `passwords.user` message and a registration link.
-The form then changes the password after only a session-bound user id and a
-successful database lookup. No e-mail token, OTP, 2FA factor or administrator
-verification is involved.
-
-`User::sendPasswordResetNotification()` now throws a `LogicException`, and the
-custom reset mailable/view have been removed, so the application cannot silently
-fall back to an e-mail link. The in-app flow remains unverified.
-
-**Attack scenario:** an attacker who knows a learner's campus address can enter
-it on `/forgot-password`, reach the new-password form, set a new password and
-take over the account. Scripting the same endpoint over a list of addresses also
-reveals which addresses are registered. CSRF protection, rate limiting, password
-hashing and session binding do not prove identity; they only limit the rate of
-abuse and protect the form submission.
-
-**Production requirement:** do not deploy this flow without a verified second
-factor. Acceptable designs include an e-mail token (the previous flow), an SMS
-OTP to a verified number, TOTP/authenticator or one-time recovery codes, or
-in-person administrator verification followed by a one-time code. The current
-data model has no verified phone number or 2FA enrolment, so none of these can
-be enabled without additional data and UX.
-
-**Tests:** `tests/Feature/Auth/PasswordResetTest.php` covers the simplified
-behaviour, no-email guarantee, throttling, validation, session binding and
-password hashing. The previous anti-enumeration assertion in
-`SecurityRegressionTest` was removed with the product change and replaced by a
-comment pointing to this finding.
+**Regression coverage:** `tests/Feature/Auth/PasswordResetTest.php` verifies
+notification delivery, generic responses, token expiry and single use, password
+rotation, request throttling, invalid token handling and token flash exclusion.
 
 ---
 
@@ -411,14 +388,16 @@ sidecar files (`-journal`, `-shm`, `-wal`).
 | Session fixation protection | `AuthenticatedSessionController::store()` calls `$request->session()->regenerate()` after a successful login; `destroy()` calls `invalidate()` and `regenerateToken()`. |
 | Password storage | `User` casts `password` to `hashed` (bcrypt); `BCRYPT_ROUNDS=12` in `.env.example`; `Rules\Password::defaults()` on registration, reset and password change. |
 | Login throttling | `routes/auth.php` applies `throttle:login` (5/minute, keyed by e-mail + IP) and `LoginRequest::ensureIsNotRateLimited()` (5 attempts). The `Lockout` event is now logged (IP only). |
-| Password reset controls | `throttle:5,1` on both POST routes, session-bound user id, single use, password hashing and remember-token rotation. Identity ownership is **not** verified; see H-03. |
-| Session cookie flags | `config/session.php` — `http_only` true, `same_site` `lax`. `SESSION_SECURE_COOKIE` now defaults to *unset* (Symfony auto-detects HTTPS) instead of `false`, and the production checklist requires `true`. |
+| Password reset controls | Laravel broker with hashed 60-minute single-use tokens, 60-second per-address broker throttle, generic response, route throttles, remember-token rotation, and SMTP delivery requirement. Verified by `PasswordResetTest`. |
+| Host and redirect protections | Laravel `TrustHosts` allows only the hostname in `APP_URL` outside local/testing; `SafeRedirect` keeps intended redirects same-origin. Reset email links are built from `APP_URL`. |
+| Browser security headers | `AddSecurityHeaders` adds `nosniff`, `DENY`, `no-referrer`, a restrictive Permissions-Policy and production HSTS over HTTPS. Verified by `SecurityHardeningTest`. |
+| Session cookie flags | `config/session.php` — `http_only` true, `same_site` `lax`; `secure` defaults on in production and the deployment checklist requires `SESSION_SECURE_COOKIE=true`. |
 | No privilege escalation from the browser | `User::$fillable` does not contain `role`; `RegisteredUserController` assigns `UserRole::Learner` explicitly; the only promotion path is the `youcast:promote-admin` console command, which is audited. |
 | Administrator route protection | `routes/web.php` applies `['auth', 'admin']`; `EnsureUserIsAdmin` aborts 403; each action additionally authorizes through a policy. |
 | Resource-level authorization | `TeamController` rejects a team from another activity with `abort_unless($team->activity_id === $activity->id, 404)`; `ActivityPolicy`, `TeamPolicy` and `ChallengeIdeaPolicy` scope every learner action to the current account. |
 | SQL injection | All queries go through Eloquent or the parameterised query builder. The only raw SQL in the application is `orderByRaw('case when status = ? then 0 else 1 end', [ActivityStatus::Published->value])` in `app/Http/Controllers/ActivityController.php:23`, which binds the value. |
 | XSS | No `{!! !!}` unescaped output anywhere in `resources/views`; no `v-html`/`innerHTML` in `resources/js`; all user content is rendered with `{{ }}`. |
-| Database integrity | Unique indexes on `registrations(user_id, activity_id)`, `team_members(team_id, user_id)`, `team_members(activity_id, user_id)`, `teams(activity_id, name)`, `teams.join_code`, `activities.slug`, `users.email`. Foreign keys use `restrictOnDelete` for historical records and `cascadeOnDelete` for dependent rows. |
+| Database integrity | Unique indexes protect registrations, teams and users. Historical author references use `nullOnDelete` to preserve content while anonymizing deleted accounts; dependent rows retain their explicit `restrictOnDelete` or `cascadeOnDelete` rules. |
 | Transactional multi-step writes | Team registration, team creation, team disbanding and individual registration all run inside `DB::transaction()`. |
 | Administrative audit trail | `activity.created`, `activity.updated`, `activity.published`, `activity.closed`, `activity.cancelled`, `activity.archived`, `idea.accepted`, `idea.rejected`, `idea.converted` and `user.promoted_admin` are written to `audit_logs` with the responsible administrator and a timestamp. |
 | Secret management | `.env` is git-ignored; `.env.example` contains placeholders only; YouCast requires no third-party messaging credentials. |
@@ -437,9 +416,9 @@ sidecar files (`-journal`, `-shm`, `-wal`).
 2. **TrustProxies is not configured.** Behind a reverse proxy, the IP-based
    limiters would see the proxy address. The account-scoped limiters are
    unaffected. Deployment requirement, documented in `README.md`.
-3. **`SESSION_SECURE_COOKIE` is not `true` by default**, because the local
-   development environment runs over plain HTTP. The production checklist
-   requires `true`.
+3. Production must configure `APP_URL` to its public HTTPS hostname, set
+   `SESSION_SECURE_COOKIE=true`, disable debug mode, configure trusted proxies
+   when deployed behind a proxy, and use SMTP rather than the local log mailer.
 4. **The npm dependency tree still reports advisories** in the Tailwind CSS 3
    build chain (`braces`, `chokidar`, `fast-glob`, `micromatch`,
    `postcss-selector-parser`). They are build-time only — none of these
@@ -475,10 +454,10 @@ automated tests and by a real HTTP smoke test against a temporary database.
 | Validation | `StoreConversationRequest` (subject ≤ 120, body ≤ 4 000) and `StoreMessageRequest` (body ≤ 4 000). |
 | Rate limiting | `throttle:message-create` (5/hour) on opening a conversation, `throttle:message-reply` (60/hour) on answering. Verified by `test_opening_a_conversation_is_rate_limited`. |
 | CSRF | Every messaging form contains `@csrf`; the endpoints are `POST`. |
-| Database integrity | Foreign keys on `conversations.student_id` and `messages.user_id` (`restrictOnDelete`), `messages.conversation_id` (`cascadeOnDelete`); indexes on `(conversation_id, created_at)` and `(conversation_id, read_at)` for the thread listing and the unread counter. |
+| Database integrity | Foreign keys on `conversations.student_id` and `messages.user_id` (`nullOnDelete`), `messages.conversation_id` (`cascadeOnDelete`); indexes on `(conversation_id, created_at)` and `(conversation_id, read_at)` for the thread listing and the unread counter. |
 | Mass assignment | `Conversation::$fillable` is `['subject']`; the owner, the status and the counters are assigned explicitly by `ConversationService`. `Message` uses `$guarded = ['*']`. |
 | Transactions | Opening a conversation and writing an answer both run inside `DB::transaction()`. |
-| History is preserved | Closing a conversation keeps every message, and an account that owns conversations or messages can no longer be deleted (`User::deletionBlockers()`), so the private history cannot be destroyed by a cascade. |
+| History is preserved | Closing a conversation keeps every message. Deleting an account keeps private history and clears its author reference (`nullOnDelete`). |
 | No destructive operation | The administration area can close and reopen a conversation; there is no delete route for conversations or messages. |
 | Audit trail | `conversation.closed` and `conversation.reopened` are written to `audit_logs` with the responsible administrator. |
 

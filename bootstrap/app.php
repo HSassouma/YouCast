@@ -17,6 +17,16 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->trustHosts(
+            at: static function (): array {
+                $host = parse_url((string) config('app.url'), PHP_URL_HOST) ?: 'localhost';
+
+                return ['^'.preg_quote($host, '/').'$'];
+            },
+            subdomains: false,
+        );
+        $middleware->append(\App\Http\Middleware\AddSecurityHeaders::class);
+
         $middleware->alias([
             'admin' => EnsureUserIsAdmin::class,
         ]);
@@ -25,5 +35,5 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->redirectUsersTo(fn () => route('dashboard'));
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        $exceptions->dontFlash(['current_password', 'password', 'password_confirmation', 'token']);
     })->create();

@@ -35,12 +35,7 @@ class SecurityRegressionTest extends TestCase
     |--------------------------------------------------------------------------
     */
 
-    /*
-     * The previous anti-enumeration assertion for password reset was removed
-     * with the simplified flow. The requested screen intentionally tells the
-     * visitor whether an account exists, which is a documented non-production
-     * limitation. PasswordResetTest covers the new behavior.
-     */
+    // Password recovery security properties are covered in PasswordResetTest.
 
     public function test_login_is_rate_limited_after_repeated_failures(): void
     {
@@ -280,13 +275,13 @@ class SecurityRegressionTest extends TestCase
 
     public function test_account_with_historical_records_can_be_deleted_without_losing_bde_history(): void
     {
-        $learner = User::factory()->learner()->create(['email' => 'owner@example.test']);
-        $idea = ChallengeIdea::factory()->create(['author_id' => $learner->id]);
-        $activity = Activity::factory()->create(['created_by' => $learner->id]);
-        $teamActivity = Activity::factory()->teamChallenge()->create(['created_by' => $learner->id]);
+        $owner = User::factory()->admin()->create(['email' => 'owner@example.test']);
+        $idea = ChallengeIdea::factory()->create(['author_id' => $owner->id]);
+        $activity = Activity::factory()->create(['created_by' => $owner->id]);
+        $teamActivity = Activity::factory()->teamChallenge()->create(['created_by' => $owner->id]);
         $team = Team::factory()->create([
             'activity_id' => $teamActivity->id,
-            'leader_id' => $learner->id,
+            'leader_id' => $owner->id,
         ]);
         $member = User::factory()->learner()->create();
         $membership = TeamMember::forceCreate([
@@ -295,17 +290,19 @@ class SecurityRegressionTest extends TestCase
             'activity_id' => $teamActivity->id,
             'role' => TeamMemberRole::Member,
         ]);
-        $conversation = Conversation::factory()->create(['student_id' => $learner->id]);
+        $conversation = Conversation::factory()->create(['student_id' => $owner->id]);
         $message = Message::factory()->create([
             'conversation_id' => $conversation->id,
-            'user_id' => $learner->id,
+            'user_id' => $owner->id,
         ]);
 
-        $this->actingAs($learner)
+        $moderator = User::factory()->admin()->create();
+
+        $this->actingAs($owner)
             ->delete(route('profile.destroy'), ['password' => 'password'])
             ->assertRedirect('/');
 
-        $this->assertDatabaseMissing('users', ['id' => $learner->id]);
+        $this->assertDatabaseMissing('users', ['id' => $owner->id]);
         $this->assertDatabaseHas('challenge_ideas', ['id' => $idea->id, 'author_id' => null]);
         $this->assertDatabaseHas('activities', ['id' => $activity->id, 'created_by' => null]);
         $this->assertDatabaseHas('activities', ['id' => $teamActivity->id, 'created_by' => null]);
@@ -317,6 +314,16 @@ class SecurityRegressionTest extends TestCase
             'role' => TeamMemberRole::Leader->value,
         ]);
         $this->assertGuest();
+
+        $this->actingAs($moderator)
+            ->get(route('admin.ideas.show', $idea))
+            ->assertOk()
+            ->assertSee('Compte supprimé');
+
+        $this->actingAs($moderator)
+            ->get(route('admin.messages.show', $conversation))
+            ->assertOk()
+            ->assertSee('Compte supprimé');
     }
 
     public function test_account_without_owned_records_can_still_be_deleted(): void

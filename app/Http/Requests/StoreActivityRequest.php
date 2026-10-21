@@ -41,6 +41,11 @@ class StoreActivityRequest extends FormRequest
             $type = $this->input('type');
 
             if ($type === ActivityType::TeamChallenge->value) {
+                if ($this->filled('capacity') && $this->filled('min_team_size')
+                    && (int) $this->input('capacity') < (int) $this->input('min_team_size')) {
+                    $validator->errors()->add('capacity', 'La capacité doit permettre au moins une équipe complète.');
+                }
+
                 if (! $this->filled('min_team_size') || ! $this->filled('max_team_size')) {
                     $validator->errors()->add('min_team_size', 'Les défis en équipe exigent une taille minimale et une taille maximale.');
                 }

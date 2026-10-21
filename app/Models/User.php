@@ -35,18 +35,6 @@ class User extends Authenticatable
         ];
     }
 
-    /**
-     * Password-reset emails are intentionally disabled.
-     *
-     * The simplified recovery flow runs entirely in the browser. This guard
-     * prevents a future call to Laravel's password broker from silently
-     * reintroducing an email-based reset path.
-     */
-    public function sendPasswordResetNotification(#[\SensitiveParameter] $token)
-    {
-        throw new \LogicException('Password-reset emails are disabled in this application.');
-    }
-
     public function isAdmin(): bool
     {
         return $this->role === UserRole::Admin;

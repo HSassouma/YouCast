@@ -53,6 +53,8 @@ class ProfileController extends Controller
             'password' => ['required', 'current_password'],
         ]);
 
+        Auth::logout();
+
         DB::transaction(function () use ($user): void {
             foreach ($user->ledTeams()->with('members')->get() as $team) {
                 $successor = $team->members->first(
@@ -70,8 +72,6 @@ class ProfileController extends Controller
 
             $user->delete();
         });
-
-        Auth::logout();
 
         $request->session()->invalidate();
         $request->session()->regenerateToken();

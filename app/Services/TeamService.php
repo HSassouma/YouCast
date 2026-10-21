@@ -24,6 +24,9 @@ class TeamService
 
         return DB::transaction(function () use ($user, $activity, $name) {
             $locked = Activity::query()->whereKey($activity->id)->lockForUpdate()->firstOrFail();
+            $this->assertTeamActivity($locked);
+            $this->registrations->assertCanRegister($user, $locked);
+            $this->assertUserFreeForActivity($user, $locked);
 
             $team = new Team;
             $team->activity_id = $locked->id;
@@ -49,8 +52,13 @@ class TeamService
         $this->assertUserFreeForActivity($user, $activity);
 
         return DB::transaction(function () use ($user, $activity, $joinCode) {
+            $lockedActivity = Activity::query()->whereKey($activity->id)->lockForUpdate()->firstOrFail();
+            $this->assertTeamActivity($lockedActivity);
+            $this->registrations->assertCanRegister($user, $lockedActivity);
+            $this->assertUserFreeForActivity($user, $lockedActivity);
+
             $team = Team::query()
-                ->where('activity_id', $activity->id)
+                ->where('activity_id', $lockedActivity->id)
                 ->where('join_code', strtoupper(trim($joinCode)))
                 ->lockForUpdate()
                 ->first();
@@ -89,6 +97,7 @@ class TeamService
     public function leaveTeam(User $user, Team $team): void
     {
         $activity = $team->activity;
+        $this->assertTeamActivity($activity);
 
         if ($team->isLeader($user)) {
             throw ValidationException::withMessages([
@@ -121,6 +130,8 @@ class TeamService
 
     public function disbandTeam(User $user, Team $team): void
     {
+        $this->assertTeamActivity($team->activity);
+
         if (! $team->isLeader($user)) {
             throw ValidationException::withMessages([
                 'team' => "Seul le responsable de l'équipe peut la dissoudre.",
@@ -142,6 +153,7 @@ class TeamService
     public function registerTeam(User $user, Team $team): Team
     {
         $activity = $team->activity()->firstOrFail();
+        $this->assertTeamActivity($activity);
 
         if (! $team->isLeader($user)) {
             throw ValidationException::withMessages([
@@ -163,12 +175,34 @@ class TeamService
             ]);
         }
 
-        return DB::transaction(function () use ($team, $activity) {
+        return DB::transaction(function () use ($user, $team, $activity) {
             $lockedActivity = Activity::query()->whereKey($activity->id)->lockForUpdate()->firstOrFail();
             $lockedTeam = Team::query()->whereKey($team->id)->lockForUpdate()->firstOrFail();
-            $members = $lockedTeam->members()->lockForUpdate()->get();
+            $this->assertTeamActivity($lockedActivity);
+            $this->registrations->assertCanRegister($user, $lockedActivity);
 
-            $this->registrations->assertCapacity($lockedActivity, $members->count());
+            if ($lockedTeam->activity_id !== $lockedActivity->id || $lockedTeam->is_registered) {
+                throw ValidationException::withMessages([
+                    'team' => 'Cette équipe ne peut pas être inscrite à cette activité.',
+                ]);
+            }
+
+            $members = $lockedTeam->members()->lockForUpdate()->get();
+            $memberCount = $members->count();
+
+            if ($memberCount < (int) $lockedActivity->min_team_size) {
+                throw ValidationException::withMessages([
+                    'team' => "Votre équipe n'atteint pas encore la taille minimale.",
+                ]);
+            }
+
+            if ($lockedActivity->max_team_size !== null && $memberCount > (int) $lockedActivity->max_team_size) {
+                throw ValidationException::withMessages([
+                    'team' => 'Votre équipe dépasse la taille maximale autorisée.',
+                ]);
+            }
+
+            $this->registrations->assertCapacity($lockedActivity, $memberCount);
 
             foreach ($members as $member) {
                 $existing = Registration::query()
@@ -210,34 +244,34 @@ class TeamService
 
     public function unregisterTeam(User $user, Team $team): Team
     {
-        $activity = $team->activity()->firstOrFail();
-
-        if (! $team->isLeader($user)) {
-            throw ValidationException::withMessages([
-                'team' => "Seul le responsable de l'équipe peut désinscrire l'équipe.",
-            ]);
-        }
-
-        if (! $activity->cancellation_allowed) {
-            throw ValidationException::withMessages([
-                'team' => "L'annulation n'est pas autorisée pour cette activité.",
-            ]);
-        }
-
-        if (! $activity->isPublished()) {
-            throw ValidationException::withMessages([
-                'team' => 'Vous ne pouvez plus désinscrire cette équipe.',
-            ]);
-        }
-
-        if (! $team->is_registered) {
-            throw ValidationException::withMessages([
-                'team' => "Cette équipe n'est pas inscrite.",
-            ]);
-        }
-
-        return DB::transaction(function () use ($team) {
+        return DB::transaction(function () use ($user, $team) {
+            $lockedActivity = Activity::query()->whereKey($team->activity_id)->lockForUpdate()->firstOrFail();
             $lockedTeam = Team::query()->whereKey($team->id)->lockForUpdate()->firstOrFail();
+            $this->assertTeamActivity($lockedActivity);
+
+            if (! $lockedTeam->isLeader($user)) {
+                throw ValidationException::withMessages([
+                    'team' => "Seul le responsable de l'équipe peut désinscrire l'équipe.",
+                ]);
+            }
+
+            if (! $lockedActivity->cancellation_allowed) {
+                throw ValidationException::withMessages([
+                    'team' => "L'annulation n'est pas autorisée pour cette activité.",
+                ]);
+            }
+
+            if (! $lockedActivity->isPublished()) {
+                throw ValidationException::withMessages([
+                    'team' => 'Vous ne pouvez plus désinscrire cette équipe.',
+                ]);
+            }
+
+            if (! $lockedTeam->is_registered) {
+                throw ValidationException::withMessages([
+                    'team' => "Cette équipe n'est pas inscrite.",
+                ]);
+            }
 
             Registration::query()
                 ->where('team_id', $lockedTeam->id)

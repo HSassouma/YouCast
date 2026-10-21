@@ -5,7 +5,9 @@ namespace Tests\Feature;
 use App\Enums\RegistrationStatus;
 use App\Models\Activity;
 use App\Models\Team;
+use App\Models\TeamMember;
 use App\Models\User;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -114,6 +116,33 @@ class TeamWorkflowTest extends TestCase
         $this->actingAs($extraLeader)
             ->post(route('activities.teams.register', [$activity, $teamTwo]))
             ->assertSessionHasErrors('activity');
+    }
+
+    public function test_team_registration_rejects_a_team_that_exceeds_the_maximum_size(): void
+    {
+        $activity = Activity::factory()->teamChallenge()->published()->create([
+            'capacity' => 5,
+            'min_team_size' => 1,
+            'max_team_size' => 1,
+        ]);
+        $leader = User::factory()->learner()->create();
+        $team = app(\App\Services\TeamService::class)->createTeam($leader, $activity, 'Too Large');
+
+        // Simulate stale or legacy data that bypassed the join rule.
+        $extra = User::factory()->learner()->create();
+        $membership = new TeamMember;
+        $membership->team_id = $team->id;
+        $membership->user_id = $extra->id;
+        $membership->activity_id = $activity->id;
+        $membership->role = 'member';
+        $membership->save();
+
+        $this->actingAs($leader)
+            ->post(route('activities.teams.register', [$activity, $team]))
+            ->assertSessionHasErrors('team');
+
+        $this->assertFalse($team->fresh()->is_registered);
+        $this->assertSame(0, $team->registrations()->count());
     }
 
     public function test_non_leader_cannot_register_team(): void

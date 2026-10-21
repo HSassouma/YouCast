@@ -43,6 +43,7 @@ class DashboardController extends Controller
         $registrations = $user->registrations()
             ->with('activity')
             ->where('status', RegistrationStatus::Registered)
+            ->whereHas('activity', fn ($query) => $query->notFinished())
             ->latest()
             ->get();
 
@@ -54,6 +55,7 @@ class DashboardController extends Controller
             'ideas' => $ideas,
             'openActivities' => Activity::query()
                 ->where('status', ActivityStatus::Published)
+                ->notFinished()
                 ->orderBy('starts_at')
                 ->limit(4)
                 ->get(),

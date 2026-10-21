@@ -14,7 +14,7 @@ class ActivityPolicy
 
     public function view(?User $user, Activity $activity): bool
     {
-        if ($activity->status->isPubliclyVisible()) {
+        if ($activity->status->isPubliclyVisible() && ! $activity->isFinished()) {
             return true;
         }
 

@@ -1,5 +1,9 @@
-<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" {{ $attributes->merge(['class' => 'text-brand-600']) }} role="img" aria-label="YouCast">
-    <rect width="48" height="48" rx="14" fill="currentColor" />
-    <path d="M14.5 30.5V17.5L24 12l9.5 5.5v13L24 36l-9.5-5.5Z" stroke="#fff" stroke-width="2.4" stroke-linejoin="round" />
-    <circle cx="24" cy="23.5" r="3.2" fill="#fff" />
+<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" {{ $attributes->merge(['class' => '']) }} role="img" aria-label="YouCast">
+    <rect width="48" height="48" rx="14" fill="#111225" />
+    <path d="M8 21v6M12 17v14M36 17v14M40 21v6" stroke="#8291FF" stroke-width="2.2" stroke-linecap="round" />
+    <rect x="18" y="8" width="12" height="23" rx="6" fill="#8B5CF6" />
+    <path d="M21 15h6M21 19h6M21 23h6" stroke="#E9E4FF" stroke-width="1.4" stroke-linecap="round" />
+    <circle cx="30.5" cy="14.5" r="4" fill="#F8F7FF" />
+    <path d="m29.7 12.7 2.5 1.8-2.5 1.8v-3.6Z" fill="#6854D9" />
+    <path d="M14 22v1a10 10 0 0 0 20 0v-1M24 33v4M19 38h10" stroke="#F8F7FF" stroke-width="2.2" stroke-linecap="round" />
 </svg>

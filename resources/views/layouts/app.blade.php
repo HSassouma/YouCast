@@ -23,7 +23,7 @@
             @include('layouts.navigation')
 
             @isset($header)
-                <header class="yc-admin-heading border-b border-brand-100/80">
+                <header class="border-b border-slate-200 bg-white">
                     <div class="mx-auto {{ $widthClass }} px-4 py-6 sm:px-6 lg:px-8">
                         {{ $header }}
                     </div>
@@ -31,7 +31,7 @@
             @endisset
 
             <main id="main" class="flex-1">
-                <div class="app-page-enter mx-auto {{ $widthClass }} px-4 py-8 sm:px-6 lg:px-8">
+                <div class="mx-auto {{ $widthClass }} px-4 py-8 sm:px-6 lg:px-8">
                     {{ $slot }}
                 </div>
             </main>

@@ -8,6 +8,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
+use App\Support\SafeRedirect;
 
 class AuthenticatedSessionController extends Controller
 {
@@ -33,7 +34,7 @@ class AuthenticatedSessionController extends Controller
             ? route('admin.activities.index', absolute: false)
             : route('activities.index', absolute: false);
 
-        return redirect()->intended($landing);
+        return SafeRedirect::intended($request, $landing);
     }
 
     /**

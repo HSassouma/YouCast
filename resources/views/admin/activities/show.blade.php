@@ -113,7 +113,7 @@
 
         <section class="panel mt-6">
             <header class="panel-header">
-                <h2 class="text-base font-semibold text-slate-900">Participants</h2>
+                <h2 class="text-base font-semibold text-slate-900">Participants ({{ $activity->active_registrations_count }})</h2>
             </header>
 
             <div class="overflow-x-auto">
@@ -128,7 +128,7 @@
                     <tbody>
                         @forelse ($activity->activeRegistrations as $registration)
                             <tr>
-                                <td class="font-medium text-slate-900">{{ $registration->user->name }}</td>
+                                <td class="font-medium text-slate-900">{{ $registration->user?->name ?? 'Compte supprimé' }}</td>
                                 <td class="text-slate-600">{{ $registration->team?->name ?? '—' }}</td>
                                 <td class="whitespace-nowrap text-slate-500">{{ $registration->registered_at?->translatedFormat('d M Y') ?? '—' }}</td>
                             </tr>

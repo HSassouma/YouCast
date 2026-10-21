@@ -6,6 +6,7 @@ use App\Enums\RegistrationStatus;
 use App\Models\Activity;
 use App\Models\Registration;
 use App\Models\User;
+use App\Services\RegistrationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -62,6 +63,45 @@ class RegistrationWorkflowTest extends TestCase
         $this->actingAs($second)
             ->post(route('activities.registrations.store', $activity))
             ->assertSessionHasErrors('activity');
+    }
+
+    public function test_finished_activity_is_removed_from_learner_dashboard_without_deleting_registration(): void
+    {
+        $learner = User::factory()->learner()->create();
+        $activity = Activity::factory()->published()->create([
+            'title' => 'Past Activity',
+            'ends_at' => now()->addHour(),
+        ]);
+        app(RegistrationService::class)->registerIndividual($learner, $activity);
+        $activity->update(['ends_at' => now()->subMinute()]);
+
+        $this->actingAs($learner)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertDontSee('Past Activity');
+
+        $this->assertDatabaseHas('registrations', [
+            'user_id' => $learner->id,
+            'activity_id' => $activity->id,
+        ]);
+    }
+
+    public function test_cannot_register_after_activity_has_finished_even_if_deadline_is_later(): void
+    {
+        $learner = User::factory()->learner()->create();
+        $activity = Activity::factory()->published()->create([
+            'ends_at' => now()->subMinute(),
+            'registration_deadline' => now()->addDay(),
+        ]);
+
+        $this->actingAs($learner)
+            ->post(route('activities.registrations.store', $activity))
+            ->assertSessionHasErrors('activity');
+
+        $this->assertDatabaseMissing('registrations', [
+            'user_id' => $learner->id,
+            'activity_id' => $activity->id,
+        ]);
     }
 
     public function test_cannot_register_after_deadline(): void
